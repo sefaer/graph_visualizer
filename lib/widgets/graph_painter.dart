@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'dart:math';
 
+import 'package:graph_visualizer/algorithms/distributed/messages.dart';
+import 'package:graph_visualizer/models/distrubuted_models.dart';
 import 'package:graph_visualizer/models/graphs.dart';
 import 'package:flutter/material.dart';
 
@@ -21,6 +24,25 @@ class GraphPainter extends CustomPainter {
   final Map<int, int?>? previousNodes;
   final int? startNode; // For shortest path visualization
   final int? targetNode; // For target node highlighting
+  final List<Message>? messages; // Node'lar arasında iletilen mesajlar
+  final Map<String, String>? routingTables; // {nodeId: routingTableJson}
+  final int? activeMessageIndex; // Animasyonda hangi mesajın aktif olduğu
+
+  final Paint _messagePaint =
+      Paint()
+        ..color = Colors.orange
+        ..style = PaintingStyle.fill;
+
+  final Paint _routingTablePaint =
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.fill;
+
+  final Paint _routingTableBorderPaint =
+      Paint()
+        ..color = Colors.blueGrey
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1;
 
   // Edge paints
   final Paint _defaultEdgePaint =
@@ -107,12 +129,21 @@ class GraphPainter extends CustomPainter {
     this.previousNodes,
     this.startNode,
     this.targetNode,
+    this.messages,
+    this.routingTables,
+    this.activeMessageIndex,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     _drawEdges(canvas);
 
+    // if (messages != null && _drawRoutingTables != null) {
+    //   _drawMessages(canvas);
+    // }
+    if (routingTables != null) {
+      _drawRoutingTables(canvas);
+    }
     // For shortest path, draw the path first so nodes appear on top
     if (isShortestPathVisualization &&
         targetNode != null &&
@@ -430,6 +461,149 @@ class GraphPainter extends CustomPainter {
     );
   }
 
+  void _drawMessagePaths(Canvas canvas) {
+    if (messages!.isEmpty) return;
+
+    final pathPaint =
+        Paint()
+          ..color = Colors.orange.withOpacity(0.3)
+          ..strokeWidth = 3
+          ..style = PaintingStyle.stroke;
+
+    // Draw paths for all messages
+    for (final message in messages!) {
+      final sourcePos = nodePositions[int.parse(message.sourceNodeId)];
+      final destPos = nodePositions[int.parse(message.destinationNodeId)];
+
+      if (sourcePos != null && destPos != null) {
+        canvas.drawLine(sourcePos, destPos, pathPaint);
+      }
+    }
+
+    // Highlight active message path
+    if (activeMessageIndex != null && activeMessageIndex! < messages!.length) {
+      final activeMessage = messages![activeMessageIndex!];
+      final activeSource = nodePositions[int.parse(activeMessage.sourceNodeId)];
+      final activeDest =
+          nodePositions[int.parse(activeMessage.destinationNodeId)];
+
+      if (activeSource != null && activeDest != null) {
+        final activePathPaint =
+            Paint()
+              ..color = Colors.orange
+              ..strokeWidth = 4
+              ..style = PaintingStyle.stroke;
+
+        canvas.drawLine(activeSource, activeDest, activePathPaint);
+      }
+    }
+  }
+
+void _drawMessages(Canvas canvas) {
+  if (messages == null || messages!.isEmpty) return;
+
+  final textPainter = TextPainter(textDirection: TextDirection.ltr);
+  final messagePaint = Paint()..style = PaintingStyle.fill;
+
+  for (int i = 0; i < messages!.length; i++) {
+    final message = messages![i];
+    final sourcePos = nodePositions[int.parse(message.sourceNodeId)];
+    final destPos = nodePositions[int.parse(message.destinationNodeId)];
+
+    if (sourcePos == null || destPos == null) continue;
+
+    final isActive = i == activeMessageIndex;
+    final progress = isActive ? currentStep / totalSteps : 1.0;
+
+    // Calculate current position
+    final currentPos = Offset(
+      sourcePos.dx + (destPos.dx - sourcePos.dx) * progress,
+      sourcePos.dy + (destPos.dy - sourcePos.dy) * progress,
+    );
+
+    // Draw connection line
+    if (isActive) {
+      final pathPaint = Paint()
+        ..color = Colors.orange.withOpacity(0.5)
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke;
+      canvas.drawLine(sourcePos, destPos, pathPaint);
+    }
+
+    // Draw message bubble
+    messagePaint.color = isActive ? Colors.orange : Colors.orange.withOpacity(0.6);
+    canvas.drawCircle(currentPos, 16, messagePaint);
+
+    // Draw message content
+    final displayText = message.content.length > 3
+        ? '${message.content.substring(0, 3)}..'
+        : message.content;
+    
+    textPainter.text = TextSpan(
+      text: displayText,
+      style: TextStyle(color: Colors.white, fontSize: 12),
+    );
+    textPainter.layout();
+    textPainter.paint(
+      canvas,
+      currentPos - Offset(textPainter.width / 2, textPainter.height / 2),
+    );
+  }
+}
+
+  void _drawRoutingTables(Canvas canvas) {
+    if (routingTables == null) return;
+
+    final textStyle = TextStyle(color: Colors.black, fontSize: 10);
+    final padding = 4.0;
+
+    routingTables!.forEach((nodeId, tableJson) {
+      final nodePos = nodePositions[int.parse(nodeId)];
+      if (nodePos == null) return;
+
+      try {
+        final table = jsonDecode(tableJson) as Map<String, dynamic>;
+        final entries = table.entries.take(3).toList(); // Show first 3 entries
+
+        final textSpans =
+            entries
+                .map(
+                  (e) =>
+                      TextSpan(text: "${e.key}→${e.value}\n", style: textStyle),
+                )
+                .toList();
+
+        if (table.length > 3) {
+          textSpans.add(TextSpan(text: "...", style: textStyle));
+        }
+
+        final textPainter = TextPainter(
+          text: TextSpan(children: textSpans),
+          textDirection: TextDirection.ltr,
+        )..layout();
+
+        final bgRect = Rect.fromLTWH(
+          nodePos.dx + 30,
+          nodePos.dy - 50,
+          textPainter.width + padding * 2,
+          textPainter.height + padding * 2,
+        );
+
+        // Draw table background
+        canvas.drawRect(bgRect, _routingTablePaint);
+        canvas.drawRect(bgRect, _routingTableBorderPaint);
+
+        // Draw table content
+        textPainter.paint(
+          canvas,
+          Offset(bgRect.left + padding, bgRect.top + padding),
+        );
+      } catch (e) {
+        debugPrint('Error drawing routing table: $e');
+      }
+    });
+  }
+
   @override
   bool shouldRepaint(covariant GraphPainter oldDelegate) {
     return traversalOrder != oldDelegate.traversalOrder ||
@@ -445,8 +619,28 @@ class GraphPainter extends CustomPainter {
         visitedNodes != oldDelegate.visitedNodes ||
         previousNodes != oldDelegate.previousNodes ||
         startNode != oldDelegate.startNode ||
-        targetNode != oldDelegate.targetNode;
+        targetNode != oldDelegate.targetNode ||
+        messages != oldDelegate.messages ||
+        routingTables != oldDelegate.routingTables ||
+        activeMessageIndex != oldDelegate.activeMessageIndex;
   }
+}
+
+void _drawMessageArrow(Canvas canvas, Offset start, Offset end) {
+  final arrowPaint =
+      Paint()
+        ..color = Colors.orange
+        ..strokeWidth = 2
+        ..style = PaintingStyle.fill;
+
+  final path =
+      Path()
+        ..moveTo(end.dx, end.dy)
+        ..lineTo(end.dx - 10, end.dy - 5)
+        ..lineTo(end.dx - 10, end.dy + 5)
+        ..close();
+
+  canvas.drawPath(path, arrowPaint);
 }
 
 extension on Offset {

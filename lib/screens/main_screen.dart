@@ -1,5 +1,5 @@
-import 'package:graph_visualizer/screens/bfs-dfs/input_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:graph_visualizer/screens/graphs_screen/input_screen.dart';
 
 class MainScreen extends StatelessWidget {
   @override

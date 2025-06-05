@@ -10,6 +10,7 @@ import 'package:graph_visualizer/helpers/screenshot_helper.dart';
 import 'package:graph_visualizer/helpers/screenshot_helper_web.dart'
     if (dart.library.io) 'package:graph_visualizer/helpers/screenshot_helper_mobile.dart';
 import 'package:graph_visualizer/models/shortespath_models.dart';
+import 'package:graph_visualizer/screens/graphs_screen/routing_screen.dart';
 import 'package:graph_visualizer/widgets/graph_painter.dart';
 import 'package:flutter/material.dart';
 import 'package:graphview/graphview.dart' as gv;
@@ -917,7 +918,9 @@ class _HomeScreenState extends State<HomeScreen> {
           isLoading: _isProcessing,
         ),
       ];
-    } else {
+    } else if (widget.graphType == "linkedList" ||
+        widget.graphType == "matrix" ||
+        widget.graphType == "distributedRoutingExamples") {
       return [
         _buildActionButton(
           icon: Icons.play_arrow,
@@ -933,8 +936,24 @@ class _HomeScreenState extends State<HomeScreen> {
           onPressed: () => _runTraversal(startDFS, "DFS"),
           isLoading: _isProcessing,
         ),
+        _buildActionButton(
+          icon: Icons.send,
+          label: "Routing Demo",
+          color: Colors.deepOrange,
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => RoutingScreen(graph: widget.graph),
+              ),
+            );
+          },
+        ),
       ];
     }
+
+    // Hata almamak için boş liste döndür
+    return [];
   }
 
   Future<void> _runTraversal(
@@ -1429,6 +1448,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }, animationSpeed.round());
   }
 
+  _startRouting() {}
   void _updateVisualizationForCurrentStep() {
     if (_algorithmSteps.isEmpty || _currentStepIndex < 0) return;
 

@@ -328,3 +328,60 @@ const Map<String, String> shortestpathExamples = {
 };
 
 const Map<String, String> bellmanFordExamples = {};
+const Map<String, String> distributedRoutingExamples = {
+  // FLOODING İÇİN ÖĞRETİCİ – Her komşuya gönderilecek yapı
+  'Flooding Öğretici':
+      '0:1(1),2(1)\n'
+      '1:0(1),2(1),3(1)\n'
+      '2:0(1),1(1),3(1)\n'
+      '3:1(1),2(1)',
+
+  // RANDOM WALK İÇİN – Rastgele dallanacak bağlantılar
+  'Random Walk Öğretici':
+      '0:1(1),2(1),3(1)\n'
+      '1:0(1),2(1)\n'
+      '2:0(1),1(1),3(1)\n'
+      '3:0(1),2(1)',
+
+  // DISTANCE VECTOR İÇİN – Yönlü ve ağırlıklı yapı
+  'Distance Vector Öğretici':
+      '0:1(2),2(5)\n'
+      '1:0(2),2(1),3(2)\n'
+      '2:0(5),1(1),3(3)\n'
+      '3:1(2),2(3)',
+
+  // LINK STATE İÇİN – Tüm komşuları bilip en kısa yol hesaplanacak yapı
+  'Link State Öğretici':
+      '0:1(1),2(4)\n'
+      '1:0(1),2(2),3(5)\n'
+      '2:0(4),1(2),3(1)\n'
+      '3:1(5),2(1)',
+
+  // PATH VECTOR İÇİN – Olası yolların vektör halinde tutulduğu yapı
+  'Path Vector Öğretici':
+      '0:1(1),2(3)\n'
+      '1:0(1),2(1),3(4)\n'
+      '2:0(3),1(1),3(2)\n'
+      '3:1(4),2(2)',
+  'Simple Network': '''
+0:1,2
+1:0,3
+2:0,3
+3:1,2,4
+4:3
+''',
+  'Ring Network': '''
+0:1,4
+1:0,2
+2:1,3
+3:2,4
+4:3,0
+''',
+  'Star Network': '''
+0:1,2,3,4
+1:0
+2:0
+3:0
+4:0
+''',
+};

@@ -74,6 +74,10 @@ class _InputScreenState extends State<InputScreen> {
           // Weighted graph input type for MST, Dijkstra and Bellman-Ford
           Map<int, List<Edge>> weightedGraph = _parseWeightedGraph(_inputData);
           graph = Graphs.fromWeightedEdges(weightedGraph);
+        } else if (_inputType == 'distributedRoutingExamples') {
+          // Weighted graph input for distributed routing algorithms like DV, LS
+          Map<int, List<Edge>> weightedGraph = _parseWeightedGraph(_inputData);
+          graph = Graphs.fromWeightedEdges(weightedGraph);
         } else {
           throw Exception("Geçersiz giriş tipi");
         }
@@ -224,6 +228,8 @@ class _InputScreenState extends State<InputScreen> {
           _inputData = linkedListExamples[exampleKey] ?? '';
         } else if (_inputType == 'shortestpath') {
           _inputData = shortestpathExamples[exampleKey] ?? '';
+        } else if (_inputType == 'distributedRoutingExamples') {
+          _inputData = distributedRoutingExamples[exampleKey] ?? '';
         } else {
           _inputData = mstExamples[exampleKey] ?? '';
         }
@@ -270,6 +276,14 @@ class _InputScreenState extends State<InputScreen> {
             "• Başlangıç düğümünü ayrıca belirtmeniz gerekir\n"
             "• Negatif ağırlıklar yalnızca Bellman-Ford ile desteklenir\n"
             "• Yönlü grafikte yalnızca belirtilen yönlerde ilerlenir";
+      case 'distributedRoutingExamples':
+        return "• Her satır bir düğüm ve komşularını temsil eder\n"
+            "• Format: `düğüm:komşu1(ağırlık),komşu2(ağırlık),...`\n"
+            "• Örnek: `0:1(1),2(3)`\n"
+            "• Düğümleri yeni satırla ayırın\n"
+            "• Flooding, Distance Vector, Link State gibi algoritmalarda kullanılır\n"
+            "• Tüm kenarlar çift yönlü kabul edilir (yönsüz)\n"
+            "• Ağırlıklar isteğe bağlı olarak göz önünde bulundurulabilir";
 
       default:
         return '';
@@ -286,6 +300,8 @@ class _InputScreenState extends State<InputScreen> {
         return "0:1(4),2(1)\n1:0(4),3(5)\n...";
       case 'shortestpath':
         return "0:1(4),2(1)\n1:0(4),3(5)\n...";
+      case 'distributedRoutingExamples':
+        return "0:1,2\n1:0,3\n...";
 
       default:
         return '';
@@ -302,6 +318,8 @@ class _InputScreenState extends State<InputScreen> {
         return mstExamples;
       case 'shortestpath':
         return shortestpathExamples;
+      case 'distributedRoutingExamples':
+        return distributedRoutingExamples;
 
       default:
         return {};
@@ -318,6 +336,8 @@ class _InputScreenState extends State<InputScreen> {
         return "Ağırlıklı Grafik (MST - Kruskal/Prim/Reverse-Delete)";
       case 'shortestpath':
         return "Ağırlıklı ve Yönlü Grafik (Dijkstra/Bellman Ford)";
+      case 'distributedRoutingExamples':
+        return "Dağıtık Algoritma";
 
       default:
         return '';
@@ -414,6 +434,10 @@ class _InputScreenState extends State<InputScreen> {
                           DropdownMenuItem(
                             value: 'shortestpath',
                             child: Text("Shortest Path"),
+                          ),
+                          DropdownMenuItem(
+                            value: 'distributedRoutingExamples',
+                            child: Text("Dağıtık Algoritma"),
                           ),
                         ],
                         onChanged: (value) {

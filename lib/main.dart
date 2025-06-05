@@ -1,6 +1,6 @@
+import 'package:graph_visualizer/screens/graphs_screen/input_screen.dart';
 import 'package:graph_visualizer/screens/main_screen.dart';
 import 'package:flutter/material.dart';
-import 'screens/bfs-dfs/input_screen.dart';
 
 void main() {
   runApp(MyApp());
