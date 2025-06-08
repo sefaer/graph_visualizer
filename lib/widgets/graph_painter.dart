@@ -7,7 +7,6 @@ import 'package:graph_visualizer/models/graphs.dart';
 import 'package:flutter/material.dart';
 
 class GraphPainter extends CustomPainter {
-  // Graph data
   final Graphs graph;
   final List<int> traversalOrder;
   final Map<int, Offset> nodePositions;
@@ -22,15 +21,45 @@ class GraphPainter extends CustomPainter {
   final Map<int, double>? distances;
   final Set<int>? visitedNodes;
   final Map<int, int?>? previousNodes;
-  final int? startNode; // For shortest path visualization
-  final int? targetNode; // For target node highlighting
-  final List<Message>? messages; // Node'lar arasında iletilen mesajlar
-  final Map<String, String>? routingTables; // {nodeId: routingTableJson}
-  final int? activeMessageIndex; // Animasyonda hangi mesajın aktif olduğu
+  final int? startNode;
+  final int? targetNode;
 
+  // Distributed algorithm specific properties
+  final List<Message>? messages;
+  final Map<String, String>? routingTables;
+  final int? activeMessageIndex;
+  final Map<String, List<String>>? messageQueues; // NodeID -> List of messages
+  final int? processingNode; // Currently processing node
+  final bool showMessagePaths;
+  final bool showMessageContents;
+  final double messageProgress; // 0.0 to 1.0 for animation
+
+  // Paints
   final Paint _messagePaint =
       Paint()
         ..color = Colors.orange
+        ..style = PaintingStyle.fill;
+
+  final Paint _activeMessagePaint =
+      Paint()
+        ..color = Colors.deepOrange
+        ..style = PaintingStyle.fill;
+
+  final Paint _messagePathPaint =
+      Paint()
+        ..color = Colors.orange.withOpacity(0.3)
+        ..strokeWidth = 3
+        ..style = PaintingStyle.stroke;
+
+  final Paint _activeMessagePathPaint =
+      Paint()
+        ..color = Colors.deepOrange
+        ..strokeWidth = 4
+        ..style = PaintingStyle.stroke;
+
+  final Paint _processingNodePaint =
+      Paint()
+        ..color = Colors.yellow.shade700
         ..style = PaintingStyle.fill;
 
   final Paint _routingTablePaint =
@@ -132,17 +161,20 @@ class GraphPainter extends CustomPainter {
     this.messages,
     this.routingTables,
     this.activeMessageIndex,
+    this.messageQueues,
+    this.processingNode,
+    this.showMessagePaths = true,
+    this.showMessageContents = true,
+    this.messageProgress = 0.0,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     _drawEdges(canvas);
 
-    // if (messages != null && _drawRoutingTables != null) {
-    //   _drawMessages(canvas);
-    // }
-    if (routingTables != null) {
-      _drawRoutingTables(canvas);
+    // Draw message paths if enabled
+    if (showMessagePaths && messages != null && messages!.isNotEmpty) {
+      _drawMessagePaths(canvas);
     }
     // For shortest path, draw the path first so nodes appear on top
     if (isShortestPathVisualization &&
@@ -153,7 +185,22 @@ class GraphPainter extends CustomPainter {
 
     _drawNodes(canvas);
 
-    // Draw distance labels if in shortest path mode
+    //aktif mesajları çiz
+    if (messages != null) {
+      _drawMessages(canvas);
+    }
+
+    //eğer mevcutsa yönlendirme tablosunu çiz
+    if (routingTables != null) {
+      // _drawRoutingTables(canvas); // şimdilik bunu göstermeyeceğim konumunu beğenmedim
+    }
+
+    // mesaj kuyrugunu çiz
+    if (messageQueues != null) {
+      _drawMessageQueues(canvas);
+    }
+
+    // En kısa yol modundaysa mesafe etiketlerini çizin
     if (isShortestPathVisualization && distances != null) {
       _drawDistanceLabels(canvas);
     }
@@ -257,11 +304,17 @@ class GraphPainter extends CustomPainter {
       );
       textPainter.layout();
       textPainter.paint(canvas, position - Offset(8, 10));
+      // Draw message queue count if exists
+      if (messageQueues != null &&
+          messageQueues!.containsKey(nodeId.toString())) {
+        _drawMessageQueueBadge(canvas, position, nodeId);
+      }
     });
   }
 
   Paint _getNodePaint(int nodeId) {
     // Special cases first
+    if (nodeId == processingNode) return _processingNodePaint;
     if (nodeId == startNode) return _startNodePaint;
     if (nodeId == targetNode) return _targetNodePaint;
     if (currentNode == nodeId) return _currentNodePaint;
@@ -277,6 +330,195 @@ class GraphPainter extends CustomPainter {
     if (traversalOrder.contains(nodeId)) return _visitedNodePaint;
 
     return _defaultNodePaint;
+  }
+
+  void _drawMessageQueueBadge(Canvas canvas, Offset position, int nodeId) {
+    final queue = messageQueues![nodeId.toString()];
+    if (queue == null || queue.isEmpty) return;
+
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: '${queue.length}',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    final badgePosition = position + Offset(20, -20);
+    final badgeRadius = 12.0;
+
+    // Draw badge background
+    canvas.drawCircle(
+      badgePosition,
+      badgeRadius,
+      _messagePaint..color = Colors.orange.withOpacity(0.8),
+    );
+
+    // Draw text
+    textPainter.paint(
+      canvas,
+      badgePosition - Offset(textPainter.width / 2, textPainter.height / 2),
+    );
+  }
+
+  void _drawMessagePaths(Canvas canvas) {
+    if (messages == null || messages!.isEmpty) return;
+
+    // Draw paths for all messages
+    for (int i = 0; i < messages!.length; i++) {
+      final message = messages![i];
+      final sourcePos = nodePositions[int.parse(message.sourceNodeId)];
+      final destPos = nodePositions[int.parse(message.destinationNodeId)];
+
+      if (sourcePos != null && destPos != null) {
+        final isActive = i == activeMessageIndex;
+        final paint = isActive ? _activeMessagePathPaint : _messagePathPaint;
+        canvas.drawLine(sourcePos, destPos, paint);
+      }
+    }
+  }
+
+  void _drawMessages(Canvas canvas) {
+    if (messages == null || messages!.isEmpty) return;
+
+    final textPainter = TextPainter(textDirection: TextDirection.ltr);
+
+    for (int i = 0; i < messages!.length; i++) {
+      final message = messages![i];
+      final sourcePos = nodePositions[int.parse(message.sourceNodeId)];
+      final destPos = nodePositions[int.parse(message.destinationNodeId)];
+
+      if (sourcePos == null || destPos == null) continue;
+
+      final isActive = i == activeMessageIndex;
+      final progress = isActive ? messageProgress : 1.0;
+
+      // Calculate current position
+      final currentPos = Offset(
+        sourcePos.dx + (destPos.dx - sourcePos.dx) * progress,
+        sourcePos.dy + (destPos.dy - sourcePos.dy) * progress,
+      );
+
+      // Draw message bubble
+      final paint = isActive ? _activeMessagePaint : _messagePaint;
+      canvas.drawCircle(currentPos, 16, paint);
+
+      // Draw message content if enabled
+      if (showMessageContents) {
+        final displayText =
+            message.content.length > 3
+                ? '${message.content.substring(0, 3)}..'
+                : message.content;
+
+        textPainter.text = TextSpan(
+          text: displayText,
+          style: TextStyle(color: Colors.white, fontSize: 12),
+        );
+        textPainter.layout();
+        textPainter.paint(
+          canvas,
+          currentPos - Offset(textPainter.width / 2, textPainter.height / 2),
+        );
+      }
+
+      // Draw arrow for active message
+      if (isActive && progress > 0.5) {
+        _drawMessageArrow(canvas, sourcePos, currentPos);
+      }
+    }
+  }
+
+  void _drawMessageQueues(Canvas canvas) {
+    if (messageQueues == null) return;
+
+    final textStyle = TextStyle(color: Colors.black, fontSize: 10);
+    final padding = 4.0;
+    final maxMessagesToShow = 3;
+
+    messageQueues!.forEach((nodeId, queue) {
+      final nodePos = nodePositions[int.parse(nodeId)];
+      if (nodePos == null || queue.isEmpty) return;
+
+      final messagesToShow =
+          queue.length > maxMessagesToShow
+              ? queue.sublist(0, maxMessagesToShow)
+              : queue;
+
+      final textSpans =
+          messagesToShow
+              .map(
+                (msg) => TextSpan(
+                  text:
+                      "${msg.length > 10 ? '${msg.substring(0, 7)}...' : msg}\n",
+                  style: textStyle,
+                ),
+              )
+              .toList();
+
+      if (queue.length > maxMessagesToShow) {
+        textSpans.add(
+          TextSpan(
+            text: "+${queue.length - maxMessagesToShow} dahası",
+            style: textStyle,
+          ),
+        );
+      }
+
+      final textPainter = TextPainter(
+        text: TextSpan(children: textSpans),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      final bgRect = Rect.fromLTWH(
+        nodePos.dx - textPainter.width - padding * 2 - 30,
+        nodePos.dy - 50,
+        textPainter.width + padding * 2,
+        textPainter.height + padding * 2,
+      );
+
+      // Draw queue background
+      canvas.drawRect(bgRect, _routingTablePaint);
+      canvas.drawRect(bgRect, _routingTableBorderPaint);
+
+      // Draw queue content
+      textPainter.paint(
+        canvas,
+        Offset(bgRect.left + padding, bgRect.top + padding),
+      );
+    });
+  }
+
+  void _drawMessageArrow(Canvas canvas, Offset start, Offset currentPos) {
+    final arrowPaint =
+        Paint()
+          ..color = Colors.deepOrange
+          ..style = PaintingStyle.fill;
+
+    final direction = (currentPos - start).normalized();
+    final angle = atan2(direction.dy, direction.dx);
+
+    final arrowSize = 10.0;
+    final arrowPoint1 = Offset(
+      currentPos.dx - arrowSize * cos(angle - pi / 6),
+      currentPos.dy - arrowSize * sin(angle - pi / 6),
+    );
+    final arrowPoint2 = Offset(
+      currentPos.dx - arrowSize * cos(angle + pi / 6),
+      currentPos.dy - arrowSize * sin(angle + pi / 6),
+    );
+
+    final path =
+        Path()
+          ..moveTo(currentPos.dx, currentPos.dy)
+          ..lineTo(arrowPoint1.dx, arrowPoint1.dy)
+          ..lineTo(arrowPoint2.dx, arrowPoint2.dy)
+          ..close();
+
+    canvas.drawPath(path, arrowPaint);
   }
 
   void _drawDistanceLabels(Canvas canvas) {
@@ -461,101 +703,106 @@ class GraphPainter extends CustomPainter {
     );
   }
 
-  void _drawMessagePaths(Canvas canvas) {
-    if (messages!.isEmpty) return;
+  // void _drawMessagePaths(Canvas canvas) {
+  //   if (messages!.isEmpty) return;
 
-    final pathPaint =
-        Paint()
-          ..color = Colors.orange.withOpacity(0.3)
-          ..strokeWidth = 3
-          ..style = PaintingStyle.stroke;
+  //   final pathPaint =
+  //       Paint()
+  //         ..color = Colors.orange.withOpacity(0.3)
+  //         ..strokeWidth = 3
+  //         ..style = PaintingStyle.stroke;
 
-    // Draw paths for all messages
-    for (final message in messages!) {
-      final sourcePos = nodePositions[int.parse(message.sourceNodeId)];
-      final destPos = nodePositions[int.parse(message.destinationNodeId)];
+  //   // Draw paths for all messages
+  //   for (final message in messages!) {
+  //     final sourcePos = nodePositions[int.parse(message.sourceNodeId)];
+  //     final destPos = nodePositions[int.parse(message.destinationNodeId)];
 
-      if (sourcePos != null && destPos != null) {
-        canvas.drawLine(sourcePos, destPos, pathPaint);
-      }
-    }
+  //     if (sourcePos != null && destPos != null) {
+  //       canvas.drawLine(sourcePos, destPos, pathPaint);
+  //     }
+  //   }
 
-    // Highlight active message path
-    if (activeMessageIndex != null && activeMessageIndex! < messages!.length) {
-      final activeMessage = messages![activeMessageIndex!];
-      final activeSource = nodePositions[int.parse(activeMessage.sourceNodeId)];
-      final activeDest =
-          nodePositions[int.parse(activeMessage.destinationNodeId)];
+  //   // Highlight active message path
+  //   if (activeMessageIndex != null && activeMessageIndex! < messages!.length) {
+  //     final activeMessage = messages![activeMessageIndex!];
+  //     final activeSource = nodePositions[int.parse(activeMessage.sourceNodeId)];
+  //     final activeDest =
+  //         nodePositions[int.parse(activeMessage.destinationNodeId)];
 
-      if (activeSource != null && activeDest != null) {
-        final activePathPaint =
-            Paint()
-              ..color = Colors.orange
-              ..strokeWidth = 4
-              ..style = PaintingStyle.stroke;
+  //     if (activeSource != null && activeDest != null) {
+  //       final activePathPaint =
+  //           Paint()
+  //             ..color = Colors.orange
+  //             ..strokeWidth = 4
+  //             ..style = PaintingStyle.stroke;
 
-        canvas.drawLine(activeSource, activeDest, activePathPaint);
-      }
-    }
-  }
+  //       canvas.drawLine(activeSource, activeDest, activePathPaint);
+  //     }
+  //   }
+  // }
 
-void _drawMessages(Canvas canvas) {
-  if (messages == null || messages!.isEmpty) return;
+  // void _drawMessages(Canvas canvas) {
+  //   if (messages == null || messages!.isEmpty) return;
 
-  final textPainter = TextPainter(textDirection: TextDirection.ltr);
-  final messagePaint = Paint()..style = PaintingStyle.fill;
+  //   final textPainter = TextPainter(textDirection: TextDirection.ltr);
+  //   final messagePaint = Paint()..style = PaintingStyle.fill;
 
-  for (int i = 0; i < messages!.length; i++) {
-    final message = messages![i];
-    final sourcePos = nodePositions[int.parse(message.sourceNodeId)];
-    final destPos = nodePositions[int.parse(message.destinationNodeId)];
+  //   for (int i = 0; i < messages!.length; i++) {
+  //     final message = messages![i];
+  //     final sourcePos = nodePositions[int.parse(message.sourceNodeId)];
+  //     final destPos = nodePositions[int.parse(message.destinationNodeId)];
 
-    if (sourcePos == null || destPos == null) continue;
+  //     if (sourcePos == null || destPos == null) continue;
 
-    final isActive = i == activeMessageIndex;
-    final progress = isActive ? currentStep / totalSteps : 1.0;
+  //     final isActive = i == activeMessageIndex;
+  //     final progress = isActive ? currentStep / totalSteps : 1.0;
 
-    // Calculate current position
-    final currentPos = Offset(
-      sourcePos.dx + (destPos.dx - sourcePos.dx) * progress,
-      sourcePos.dy + (destPos.dy - sourcePos.dy) * progress,
-    );
+  //     // Calculate current position
+  //     final currentPos = Offset(
+  //       sourcePos.dx + (destPos.dx - sourcePos.dx) * progress,
+  //       sourcePos.dy + (destPos.dy - sourcePos.dy) * progress,
+  //     );
 
-    // Draw connection line
-    if (isActive) {
-      final pathPaint = Paint()
-        ..color = Colors.orange.withOpacity(0.5)
-        ..strokeWidth = 2
-        ..style = PaintingStyle.stroke;
-      canvas.drawLine(sourcePos, destPos, pathPaint);
-    }
+  //     // Draw connection line
+  //     if (isActive) {
+  //       final pathPaint =
+  //           Paint()
+  //             ..color = Colors.orange.withOpacity(0.5)
+  //             ..strokeWidth = 2
+  //             ..style = PaintingStyle.stroke;
+  //       canvas.drawLine(sourcePos, destPos, pathPaint);
+  //     }
 
-    // Draw message bubble
-    messagePaint.color = isActive ? Colors.orange : Colors.orange.withOpacity(0.6);
-    canvas.drawCircle(currentPos, 16, messagePaint);
+  //     // Draw message bubble
+  //     messagePaint.color =
+  //         isActive ? Colors.orange : Colors.orange.withOpacity(0.6);
+  //     canvas.drawCircle(currentPos, 16, messagePaint);
 
-    // Draw message content
-    final displayText = message.content.length > 3
-        ? '${message.content.substring(0, 3)}..'
-        : message.content;
-    
-    textPainter.text = TextSpan(
-      text: displayText,
-      style: TextStyle(color: Colors.white, fontSize: 12),
-    );
-    textPainter.layout();
-    textPainter.paint(
-      canvas,
-      currentPos - Offset(textPainter.width / 2, textPainter.height / 2),
-    );
-  }
-}
+  //     // Draw message content
+  //     final displayText =
+  //         message.content.length > 3
+  //             ? '${message.content.substring(0, 3)}..'
+  //             : message.content;
+
+  //     textPainter.text = TextSpan(
+  //       text: displayText,
+  //       style: TextStyle(color: Colors.white, fontSize: 12),
+  //     );
+  //     textPainter.layout();
+  //     textPainter.paint(
+  //       canvas,
+  //       currentPos - Offset(textPainter.width / 2, textPainter.height / 2),
+  //     );
+  //   }
+  // }
 
   void _drawRoutingTables(Canvas canvas) {
     if (routingTables == null) return;
 
     final textStyle = TextStyle(color: Colors.black, fontSize: 10);
     final padding = 4.0;
+    final arrowLength = 10.0; // Ok uzunluğu
+    final arrowWidth = 5.0; // Ok genişliği
 
     routingTables!.forEach((nodeId, tableJson) {
       final nodePos = nodePositions[int.parse(nodeId)];
@@ -563,7 +810,7 @@ void _drawMessages(Canvas canvas) {
 
       try {
         final table = jsonDecode(tableJson) as Map<String, dynamic>;
-        final entries = table.entries.take(3).toList(); // Show first 3 entries
+        final entries = table.entries.take(3).toList(); // İlk 3 girişi göster
 
         final textSpans =
             entries
@@ -582,6 +829,7 @@ void _drawMessages(Canvas canvas) {
           textDirection: TextDirection.ltr,
         )..layout();
 
+        // Tablonun konumunu düğümün biraz uzağında ayarlama
         final bgRect = Rect.fromLTWH(
           nodePos.dx + 30,
           nodePos.dy - 50,
@@ -589,11 +837,18 @@ void _drawMessages(Canvas canvas) {
           textPainter.height + padding * 2,
         );
 
-        // Draw table background
+        // Okun başlangıç ve bitiş noktaları
+        final arrowStart = Offset(nodePos.dx, nodePos.dy);
+        final arrowEnd = Offset(bgRect.left, bgRect.top + (bgRect.height / 2));
+
+        // // Ok çizecek fonksiyon
+        // drawArrowRoutingTable(canvas, nodePos,nodePos , 5.0, 5.0);
+
+        // Tablonun arka planını çiz
         canvas.drawRect(bgRect, _routingTablePaint);
         canvas.drawRect(bgRect, _routingTableBorderPaint);
 
-        // Draw table content
+        // Tablonun içeriğini çiz
         textPainter.paint(
           canvas,
           Offset(bgRect.left + padding, bgRect.top + padding),
@@ -603,6 +858,38 @@ void _drawMessages(Canvas canvas) {
       }
     });
   }
+
+  // Ok çizen fonksiyon
+  void drawArrowRoutingTable(
+    Canvas canvas,
+    Offset start,
+    Offset end,
+    double width,
+    double spacing, // Düğüm ile ok arasındaki mesafe
+  ) {
+    final paint =
+        Paint()
+          ..color = const Color.fromARGB(255, 23, 8, 8)
+          ..style = PaintingStyle.fill;
+
+    // Okun başlangıç noktasını, düğüm ile araya mesafe ekleyerek ayarla
+    final adjustedStart = Offset(start.dx + spacing, start.dy);
+
+    // Okun gövdesini çiz
+    canvas.drawLine(adjustedStart, end, paint);
+
+    // Okun başını çiz
+    final arrowHeadPath =
+        Path()
+          ..moveTo(end.dx, end.dy)
+          ..lineTo(end.dx - width, end.dy - width / 2) // Sol kenar
+          ..lineTo(end.dx - width, end.dy + width / 2) // Sağ kenar
+          ..close();
+
+    canvas.drawPath(arrowHeadPath, paint);
+  }
+
+  // Ok çizen fonksiyon
 
   @override
   bool shouldRepaint(covariant GraphPainter oldDelegate) {
@@ -622,7 +909,10 @@ void _drawMessages(Canvas canvas) {
         targetNode != oldDelegate.targetNode ||
         messages != oldDelegate.messages ||
         routingTables != oldDelegate.routingTables ||
-        activeMessageIndex != oldDelegate.activeMessageIndex;
+        activeMessageIndex != oldDelegate.activeMessageIndex ||
+        messageQueues != oldDelegate.messageQueues ||
+        processingNode != oldDelegate.processingNode ||
+        messageProgress != oldDelegate.messageProgress;
   }
 }
 

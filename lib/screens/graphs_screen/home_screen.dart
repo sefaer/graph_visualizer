@@ -1,16 +1,18 @@
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:graph_visualizer/algorithms/bellman_ford.dart';
 import 'package:graph_visualizer/algorithms/dijkstra.dart';
+import 'package:graph_visualizer/algorithms/distributed/messages.dart';
 import 'package:graph_visualizer/algorithms/kruskal.dart';
 import 'package:graph_visualizer/algorithms/prim.dart';
 import 'package:graph_visualizer/algorithms/reverse_delete.dart';
 import 'package:graph_visualizer/helpers/screenshot_helper.dart';
 import 'package:graph_visualizer/helpers/screenshot_helper_web.dart'
     if (dart.library.io) 'package:graph_visualizer/helpers/screenshot_helper_mobile.dart';
+import 'package:graph_visualizer/models/routing_step.dart';
 import 'package:graph_visualizer/models/shortespath_models.dart';
-import 'package:graph_visualizer/screens/graphs_screen/routing_screen.dart';
 import 'package:graph_visualizer/widgets/graph_painter.dart';
 import 'package:flutter/material.dart';
 import 'package:graphview/graphview.dart' as gv;
@@ -24,8 +26,11 @@ enum MSTAlgorithm { Prim, Kruskal, ReverseDelete }
 
 enum DijsktraAlgorithm { ShortestPath, BelmanFord }
 
+enum RoutingAlgorithm { SimpleRouting }
+
 MSTAlgorithm? currentAlgorithm;
 DijsktraAlgorithm? currentDijkstra;
+RoutingAlgorithm? currentRouting;
 
 class HomeScreen extends StatefulWidget {
   final Graphs graph;
@@ -54,16 +59,22 @@ class _HomeScreenState extends State<HomeScreen> {
   int _finalTotalSteps = 1;
   // MST specific state
   BaseMSTStep? currentMSTStep;
+  List<RoutingStep> _routingSteps = []; // Algoritma adımlarını saklayacak liste
+  RoutingStep? currentRoutingStep; // Ş
   bool isMSTVisualization = false;
   final GlobalKey _screenshotKey = GlobalKey();
-  List<BaseMSTStep> _algorithmSteps = []; // Tüm adımları saklayacağımız liste
+  List<BaseMSTStep> _algorithmSteps = [];
   int _currentStepIndex = 0;
   BaseShortestPathStep? currentShortestPathStep;
   bool isShortestPathVisualization = false;
   List<BaseShortestPathStep> _shortestPathSteps = [];
+  // Routing specific state
+  bool isRoutingVisualization = false;
+  List<int>? _routingPath;
   int? _selectedStartNode;
   int? _selectedTargetNode;
   bool _showNodeSelectionError = false;
+
   @override
   void initState() {
     super.initState();
@@ -260,7 +271,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           totalSteps: totalSteps,
                           graph: widget.graph,
                           traversalOrder: traversalOrder,
-                          nodePositions: _calculateMSTNodePositions(
+                          nodePositions: _calculateBuchheimWalkerNodePositions(
                             widget.graph,
                             context,
                           ),
@@ -279,15 +290,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           traversalOrder: traversalOrder,
                           graph: widget.graph,
                           distances: currentShortestPathStep?.distances,
-                          nodePositions: calculateSmartPathVisualization(
-                            graph: widget.graph,
-                            context: context,
-                            traversalOrder: traversalOrder,
-                            visitedNodes: currentShortestPathStep?.visited,
-                            highlightedEdges:
-                                currentShortestPathStep?.processingEdge != null
-                                    ? {currentShortestPathStep!.processingEdge!}
-                                    : null,
+                          nodePositions: _calculateBuchheimWalkerNodePositions(
+                            widget.graph,
+                            context,
                           ),
                           showWeights: true,
                           isShortestPathVisualization: true,
@@ -297,6 +302,41 @@ class _HomeScreenState extends State<HomeScreen> {
                           currentStep: currentStep,
                           totalSteps: totalSteps,
                           isDirected: true,
+                        ),
+                      )
+                      : widget.graphType == "distributedRoutingExamples"
+                      ? CustomPaint(
+                        painter: GraphPainter(
+                          graph: widget.graph,
+                          traversalOrder: traversalOrder,
+                          nodePositions: _calculateBuchheimWalkerNodePositions(
+                            widget.graph,
+                            context,
+                          ),
+                          showWeights: true,
+                          isShortestPathVisualization: false,
+                          isMSTVisualization: false,
+                          isDirected:
+                              false, // Typically true for routing examples
+                          currentStep: currentStep,
+                          totalSteps: totalSteps,
+
+                          // Distributed routing specific parameters
+                          messages:
+                              currentRoutingStep?.messages, // List<Message>
+                          routingTables:
+                              currentRoutingStep
+                                  ?.routingTables, // Map<String, String>
+                          activeMessageIndex:
+                              currentRoutingStep?.activeMessageIndex,
+                          messageQueues:
+                              currentRoutingStep
+                                  ?.messageQueues, // Map<String, List<String>>
+                          processingNode: currentRoutingStep?.processingNode,
+                          showMessagePaths: true,
+                          showMessageContents: true,
+                          messageProgress:
+                              currentRoutingStep?.messageProgress ?? 0.0,
                         ),
                       )
                       : gv.GraphView(
@@ -539,6 +579,70 @@ class _HomeScreenState extends State<HomeScreen> {
         positions[nodes[i]] = Offset(x, levelY);
       }
     }
+
+    return positions;
+  }
+
+  Map<int, Offset> _calculateBuchheimWalkerNodePositions(
+    Graphs graph,
+    BuildContext context,
+  ) {
+    final positions = <int, Offset>{};
+    if (graph.adjacencyList.isEmpty) return positions;
+
+    final containerSize = Size(
+      MediaQuery.of(context).size.width,
+      MediaQuery.of(context).size.height * 0.6,
+    );
+
+    // Constants for layout
+    const rootY = 50.0;
+    const levelHeight = 120.0;
+    const siblingDistance = 100.0;
+
+    // Find root node (first node)
+    final rootNode = graph.adjacencyList.keys.first;
+
+    // Data structures
+    final children = <int, List<int>>{};
+    final depths = <int, int>{};
+    final visited = <int>{};
+
+    // BFS to build tree structure
+    final queue = Queue<int>();
+    queue.add(rootNode);
+    visited.add(rootNode);
+    depths[rootNode] = 0;
+
+    while (queue.isNotEmpty) {
+      final nodeId = queue.removeFirst();
+      final nodeChildren = <int>[];
+
+      for (final neighbor in graph.adjacencyList[nodeId] ?? []) {
+        if (!visited.contains(neighbor)) {
+          visited.add(neighbor);
+          nodeChildren.add(neighbor);
+          depths[neighbor] = depths[nodeId]! + 1;
+          queue.add(neighbor);
+        }
+      }
+
+      children[nodeId] = nodeChildren;
+    }
+
+    // Buchheim-Walker algorithm implementation
+    void _buchheimWalker(int nodeId, double x, double y) {
+      positions[nodeId] = Offset(x, y);
+      double childX = x - siblingDistance * (children[nodeId]?.length ?? 0) / 2;
+
+      for (final child in children[nodeId]!) {
+        _buchheimWalker(child, childX, y + levelHeight);
+        childX += siblingDistance; // Move x position for the next child
+      }
+    }
+
+    // Start positioning from the root node
+    _buchheimWalker(rootNode, containerSize.width / 2, rootY);
 
     return positions;
   }
@@ -938,22 +1042,298 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         _buildActionButton(
           icon: Icons.send,
-          label: "Routing Demo",
+          label: "Routing",
           color: Colors.deepOrange,
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => RoutingScreen(graph: widget.graph),
-              ),
-            );
-          },
+          onPressed: startDistanceVectorRouting,
         ),
       ];
     }
-
-    // Hata almamak için boş liste döndür
     return [];
+  }
+
+  Future<void> startDistanceVectorRouting() async {
+    // 1. Algoritma başlangıç ayarları
+    setState(() {
+      _isProcessing = true; // İşlem devam ediyor
+      _routingSteps.clear(); // Önceki adımları temizle
+      currentRoutingStep = null; // Şu anki adımı sıfırla
+      currentStep = 0; // Adım sayacını sıfırla
+    });
+
+    // 2. Kullanıcıdan giriş almak için bir dialog göster
+    final result = await _showRoutingParametersDialog();
+    if (result == null) {
+      setState(() => _isProcessing = false);
+      return; // Kullanıcıdan geçersiz giriş alındıysa işlemi durdur
+    }
+
+    final startNode = result['startNode'];
+    final targetNode = result['targetNode'];
+    final messageContent = result['message'];
+
+    // 3. Yönlendirme tablolarını ve mesaj kuyruklarını başlat
+    final routingTables =
+        <String, String>{}; // {DüğümID: JSON formatında routing table}
+    final messageQueues =
+        <String, List<String>>{}; // {DüğümID: [mesaj1, mesaj2]}
+
+    // 4. Komşu bilgileriyle başlangıç tablolarını oluştur
+    widget.graph.adjacencyList.forEach((node, neighbors) {
+      final table = <String, dynamic>{
+        'düğüm': node.toString(),
+        'vektör': {
+          for (final neighbor in neighbors)
+            neighbor.toString(): {
+              'mesafe': widget.graph.getEdge(node, neighbor)?.weight ?? 1,
+              'Sıradaki Sıçrama.': neighbor.toString(),
+            },
+        },
+      };
+      routingTables[node.toString()] = jsonEncode(
+        table,
+      ); // Tabloyu JSON'a çevir
+      messageQueues[node.toString()] = []; // Boş mesaj kuyruğu oluştur
+    });
+
+    // 5. Algoritma adımlarını uygula
+    for (final node in widget.graph.adjacencyList.keys) {
+      setState(() {
+        currentRoutingStep = RoutingStep(
+          currentStep: currentStep++,
+          totalSteps: widget.graph.adjacencyList.length * 2,
+          description: '$node düğümü güncellemeleri işliyor',
+          messages: [],
+          routingTables: Map.of(routingTables), // Mevcut tabloların kopyası
+          processingNode: node, // İşlem yapan düğüm
+          messageQueues: Map.of(messageQueues), // Kuyrukların kopyası
+        );
+        _routingSteps.add(currentRoutingStep!); // Adımı listeye ekle
+      });
+      await Future.delayed(Duration(milliseconds: animationSpeed.round()));
+
+      // 6. Komşulara mesaj gönder
+      for (final neighbor in widget.graph.adjacencyList[node]!) {
+        final message = Message(
+          sourceNodeId: node.toString(),
+          destinationNodeId: neighbor.toString(),
+          content: messageContent, // Kullanıcının girdiği mesajı kullan
+        );
+
+        // Mesaj gönderme animasyonu
+        for (double progress = 0.0; progress <= 1.0; progress += 0.1) {
+          setState(() {
+            currentRoutingStep = RoutingStep(
+              currentStep: currentStep,
+              totalSteps: widget.graph.adjacencyList.length * 2,
+              description: '$node → $neighbor mesaj gönderiyor',
+              messages: [message],
+              routingTables: Map.of(routingTables),
+              activeMessageIndex: 0, // Aktif mesaj indeksi
+              processingNode: node,
+              messageQueues: Map.of(messageQueues),
+              messageProgress: progress, // Animasyon ilerlemesi (%0-100)
+            );
+          });
+          await Future.delayed(Duration(milliseconds: animationSpeed ~/ 10));
+        }
+
+        // Mesajı komşunun kuyruğuna ekle
+        messageQueues[neighbor.toString()]!.add(message.content);
+      }
+    }
+
+    // 7. En kısa yolu bul
+    final path = await _findPath(startNode, targetNode);
+
+    // 8. Algoritma tamamlandı
+    setState(() {
+      _isProcessing = false;
+      currentRoutingStep = RoutingStep(
+        currentStep: currentStep,
+        totalSteps: widget.graph.adjacencyList.length * 2,
+        description: 'Yönlendirme tabloları kararlı durumda',
+        messages: [],
+        routingTables: routingTables, // Final tablolar
+        messageQueues: messageQueues, // Final kuyruklar
+      );
+    });
+
+    // 9. Kullanıcıya en kısa yolu göster
+    if (path != null && path.isNotEmpty) {
+      _showRoutingResults(path);
+    } else {
+      _showErrorDialog('Başlangıç ve hedef arasında yol bulunamadı!');
+    }
+  }
+
+  void _showErrorDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Hata'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Tamam'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showRoutingResults(List<int> path) async {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Routing Tamamlandı'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Başlangıç: ${path.first}'),
+              Text('Hedef: ${path.last}'),
+              SizedBox(height: 10),
+              Text('Bulunan Yol:'),
+              SizedBox(height: 5),
+              Text(
+                path.join(' → '),
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              SizedBox(height: 10),
+              Text('Toplam Adım: ${path.length - 1}'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Tamam'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>?> _showRoutingParametersDialog() async {
+    final availableNodes = widget.graph.adjacencyList.keys.toList();
+    int? selectedStartNode;
+    int? selectedTargetNode;
+    String messageContent = '';
+
+    return await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Routing Parametreleri'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<int>(
+                value: selectedStartNode,
+                decoration: InputDecoration(labelText: 'Başlangıç Düğümü'),
+                items:
+                    availableNodes.map((node) {
+                      return DropdownMenuItem<int>(
+                        value: node,
+                        child: Text('Düğüm $node'),
+                      );
+                    }).toList(),
+                onChanged: (value) {
+                  selectedStartNode = value;
+                },
+              ),
+              SizedBox(height: 16),
+              DropdownButtonFormField<int>(
+                value: selectedTargetNode,
+                decoration: InputDecoration(labelText: 'Hedef Düğüm'),
+                items:
+                    availableNodes.map((node) {
+                      return DropdownMenuItem<int>(
+                        value: node,
+                        child: Text('Düğüm $node'),
+                      );
+                    }).toList(),
+                onChanged: (value) {
+                  selectedTargetNode = value;
+                },
+              ),
+              SizedBox(height: 16),
+              TextField(
+                decoration: InputDecoration(labelText: 'Mesaj'),
+                onChanged: (value) {
+                  messageContent = value;
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('İptal'),
+            ),
+            TextButton(
+              onPressed: () {
+                if (selectedStartNode != null && selectedTargetNode != null) {
+                  Navigator.pop(context, {
+                    'startNode': selectedStartNode,
+                    'targetNode': selectedTargetNode,
+                    'message': messageContent,
+                  });
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Lütfen tüm alanları doldurun!')),
+                  );
+                }
+              },
+              child: Text('Başlat'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<List<int>?> _findPath(int start, int target) async {
+    final visited = <int>{};
+    final queue = Queue<List<int>>();
+    queue.add([start]);
+
+    while (queue.isNotEmpty) {
+      final currentPath = queue.removeFirst();
+      final currentNode = currentPath.last;
+
+      // Eğer hedef düğüme ulaşıldıysa, yolu döndür
+      if (currentNode == target) {
+        setState(() {
+          traversalOrder.add(currentNode); // Yalnızca hedef düğümde güncelle
+        });
+        return currentPath;
+      }
+
+      if (!visited.contains(currentNode)) {
+        visited.add(currentNode);
+
+        for (final neighbor in widget.graph.adjacencyList[currentNode] ?? []) {
+          if (!visited.contains(neighbor)) {
+            final newPath = List<int>.from(currentPath)..add(neighbor);
+
+            // Yalnızca kenar kontrolü için görselleştirme güncellemesi
+            setState(() {
+              traversalOrder.add(neighbor);
+            });
+            await Future.delayed(Duration(milliseconds: animationSpeed ~/ 2));
+
+            queue.add(newPath);
+          }
+        }
+      }
+    }
+
+    return null; // Yol bulunamadı
   }
 
   Future<void> _runTraversal(
@@ -1448,7 +1828,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }, animationSpeed.round());
   }
 
-  _startRouting() {}
   void _updateVisualizationForCurrentStep() {
     if (_algorithmSteps.isEmpty || _currentStepIndex < 0) return;
 
