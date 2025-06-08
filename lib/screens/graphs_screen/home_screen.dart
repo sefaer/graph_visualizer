@@ -595,54 +595,66 @@ class _HomeScreenState extends State<HomeScreen> {
       MediaQuery.of(context).size.height * 0.6,
     );
 
-    // Constants for layout
     const rootY = 50.0;
     const levelHeight = 120.0;
     const siblingDistance = 100.0;
 
-    // Find root node (first node)
-    final rootNode = graph.adjacencyList.keys.first;
-
-    // Data structures
-    final children = <int, List<int>>{};
-    final depths = <int, int>{};
+    final allNodes = graph.adjacencyList.keys.toSet();
     final visited = <int>{};
+    final depths = <int, int>{};
 
-    // BFS to build tree structure
-    final queue = Queue<int>();
-    queue.add(rootNode);
-    visited.add(rootNode);
-    depths[rootNode] = 0;
-
-    while (queue.isNotEmpty) {
-      final nodeId = queue.removeFirst();
-      final nodeChildren = <int>[];
-
-      for (final neighbor in graph.adjacencyList[nodeId] ?? []) {
-        if (!visited.contains(neighbor)) {
-          visited.add(neighbor);
-          nodeChildren.add(neighbor);
-          depths[neighbor] = depths[nodeId]! + 1;
-          queue.add(neighbor);
-        }
-      }
-
-      children[nodeId] = nodeChildren;
-    }
-
-    // Buchheim-Walker algorithm implementation
-    void _buchheimWalker(int nodeId, double x, double y) {
+    // Buchheim-Walker helper
+    void _buchheimWalker(
+      int nodeId,
+      double x,
+      double y,
+      Map<int, List<int>> children,
+    ) {
       positions[nodeId] = Offset(x, y);
       double childX = x - siblingDistance * (children[nodeId]?.length ?? 0) / 2;
 
       for (final child in children[nodeId]!) {
-        _buchheimWalker(child, childX, y + levelHeight);
-        childX += siblingDistance; // Move x position for the next child
+        _buchheimWalker(child, childX, y + levelHeight, children);
+        childX += siblingDistance;
       }
     }
 
-    // Start positioning from the root node
-    _buchheimWalker(rootNode, containerSize.width / 2, rootY);
+    // Handle disconnected components (or multiple roots)
+    double xOffset = 0;
+
+    while (visited.length < allNodes.length) {
+      final rootNode = allNodes.difference(visited).first;
+      final queue = Queue<int>();
+      final children = <int, List<int>>{};
+
+      queue.add(rootNode);
+      visited.add(rootNode);
+      depths[rootNode] = 0;
+
+      while (queue.isNotEmpty) {
+        final nodeId = queue.removeFirst();
+        final nodeChildren = <int>[];
+
+        for (final neighbor in graph.adjacencyList[nodeId] ?? []) {
+          if (!visited.contains(neighbor)) {
+            visited.add(neighbor);
+            nodeChildren.add(neighbor);
+            depths[neighbor] = depths[nodeId]! + 1;
+            queue.add(neighbor);
+          }
+        }
+
+        children[nodeId] = nodeChildren;
+      }
+
+      _buchheimWalker(
+        rootNode,
+        containerSize.width / 2 + xOffset,
+        rootY,
+        children,
+      );
+      xOffset += 250; // Yeni bileşenleri yana kaydır
+    }
 
     return positions;
   }
@@ -1052,33 +1064,29 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> startDistanceVectorRouting() async {
-    // 1. Algoritma başlangıç ayarları
     setState(() {
-      _isProcessing = true; // İşlem devam ediyor
-      _routingSteps.clear(); // Önceki adımları temizle
-      currentRoutingStep = null; // Şu anki adımı sıfırla
-      currentStep = 0; // Adım sayacını sıfırla
+      _isProcessing = true;
+      _routingSteps.clear();
+      currentRoutingStep = null;
+      currentStep = 0;
     });
 
-    // 2. Kullanıcıdan giriş almak için bir dialog göster
     final result = await _showRoutingParametersDialog();
     if (result == null) {
       setState(() => _isProcessing = false);
-      return; // Kullanıcıdan geçersiz giriş alındıysa işlemi durdur
+      return;
     }
 
-    final startNode = result['startNode'];
-    final targetNode = result['targetNode'];
-    final messageContent = result['message'];
+    final int startNode = result['startNode'];
+    final int targetNode = result['targetNode'];
+    final String messageContent = result['message'];
 
-    // 3. Yönlendirme tablolarını ve mesaj kuyruklarını başlat
-    final routingTables =
-        <String, String>{}; // {DüğümID: JSON formatında routing table}
-    final messageQueues =
-        <String, List<String>>{}; // {DüğümID: [mesaj1, mesaj2]}
+    final routingTables = <String, String>{}; // int key
+    final messageQueues = <int, List<String>>{};
+    final visited = <int>{};
+    final queue = Queue<int>()..add(startNode);
 
-    // 4. Komşu bilgileriyle başlangıç tablolarını oluştur
-    widget.graph.adjacencyList.forEach((node, neighbors) {
+    widget.graph.adjacencyList.forEach((int node, List<int> neighbors) {
       final table = <String, dynamic>{
         'düğüm': node.toString(),
         'vektör': {
@@ -1089,63 +1097,74 @@ class _HomeScreenState extends State<HomeScreen> {
             },
         },
       };
-      routingTables[node.toString()] = jsonEncode(
-        table,
-      ); // Tabloyu JSON'a çevir
-      messageQueues[node.toString()] = []; // Boş mesaj kuyruğu oluştur
+      routingTables[node.toString()] = jsonEncode(table);
+      messageQueues[node] = [];
     });
 
-    // 5. Algoritma adımlarını uygula
-    for (final node in widget.graph.adjacencyList.keys) {
+    while (queue.isNotEmpty) {
+      final int node = queue.removeFirst();
+      visited.add(node);
+
       setState(() {
         currentRoutingStep = RoutingStep(
           currentStep: currentStep++,
           totalSteps: widget.graph.adjacencyList.length * 2,
           description: '$node düğümü güncellemeleri işliyor',
           messages: [],
-          routingTables: Map.of(routingTables), // Mevcut tabloların kopyası
-          processingNode: node, // İşlem yapan düğüm
-          messageQueues: Map.of(messageQueues), // Kuyrukların kopyası
+          routingTables: Map.of(routingTables),
+          processingNode: node,
+          messageQueues: Map.fromEntries(
+            messageQueues.entries.map(
+              (e) => MapEntry(e.key.toString(), e.value),
+            ),
+          ),
         );
-        _routingSteps.add(currentRoutingStep!); // Adımı listeye ekle
       });
       await Future.delayed(Duration(milliseconds: animationSpeed.round()));
 
-      // 6. Komşulara mesaj gönder
-      for (final neighbor in widget.graph.adjacencyList[node]!) {
-        final message = Message(
-          sourceNodeId: node.toString(),
-          destinationNodeId: neighbor.toString(),
-          content: messageContent, // Kullanıcının girdiği mesajı kullan
-        );
+      final neighbors = widget.graph.adjacencyList[node]!;
+      for (final int neighbor in neighbors) {
+        if (!visited.contains(neighbor)) {
+          final message = Message(
+            sourceNodeId: node.toString(),
+            destinationNodeId: neighbor.toString(),
+            content: messageContent,
+          );
 
-        // Mesaj gönderme animasyonu
-        for (double progress = 0.0; progress <= 1.0; progress += 0.1) {
-          setState(() {
-            currentRoutingStep = RoutingStep(
-              currentStep: currentStep,
-              totalSteps: widget.graph.adjacencyList.length * 2,
-              description: '$node → $neighbor mesaj gönderiyor',
-              messages: [message],
-              routingTables: Map.of(routingTables),
-              activeMessageIndex: 0, // Aktif mesaj indeksi
-              processingNode: node,
-              messageQueues: Map.of(messageQueues),
-              messageProgress: progress, // Animasyon ilerlemesi (%0-100)
-            );
-          });
-          await Future.delayed(Duration(milliseconds: animationSpeed ~/ 10));
+          if (messageQueues[neighbor]!.isEmpty) {
+            messageQueues[neighbor]!.add(message.content);
+
+            for (double progress = 0.0; progress <= 1.0; progress += 0.1) {
+              setState(() {
+                currentRoutingStep = RoutingStep(
+                  currentStep: currentStep++,
+                  totalSteps: widget.graph.adjacencyList.length * 2,
+                  description: '$node → $neighbor mesaj gönderiyor',
+                  messages: [message],
+                  routingTables: Map.of(routingTables),
+                  activeMessageIndex: 0,
+                  processingNode: node,
+                  messageQueues: Map.fromEntries(
+                    messageQueues.entries.map(
+                      (e) => MapEntry(e.key.toString(), e.value),
+                    ),
+                  ),
+                  messageProgress: progress,
+                );
+              });
+              await Future.delayed(
+                Duration(milliseconds: animationSpeed.round()),
+              );
+            }
+
+            queue.add(neighbor);
+          }
         }
-
-        // Mesajı komşunun kuyruğuna ekle
-        messageQueues[neighbor.toString()]!.add(message.content);
       }
     }
 
-    // 7. En kısa yolu bul
     final path = await _findPath(startNode, targetNode);
 
-    // 8. Algoritma tamamlandı
     setState(() {
       _isProcessing = false;
       currentRoutingStep = RoutingStep(
@@ -1153,12 +1172,15 @@ class _HomeScreenState extends State<HomeScreen> {
         totalSteps: widget.graph.adjacencyList.length * 2,
         description: 'Yönlendirme tabloları kararlı durumda',
         messages: [],
-        routingTables: routingTables, // Final tablolar
-        messageQueues: messageQueues, // Final kuyruklar
+        routingTables: Map.fromEntries(
+          routingTables.entries.map((e) => MapEntry(e.key.toString(), e.value)),
+        ),
+        messageQueues: Map.fromEntries(
+          messageQueues.entries.map((e) => MapEntry(e.key.toString(), e.value)),
+        ),
       );
     });
 
-    // 9. Kullanıcıya en kısa yolu göster
     if (path != null && path.isNotEmpty) {
       _showRoutingResults(path);
     } else {

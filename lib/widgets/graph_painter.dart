@@ -443,13 +443,16 @@ class GraphPainter extends CustomPainter {
       final nodePos = nodePositions[int.parse(nodeId)];
       if (nodePos == null || queue.isEmpty) return;
 
-      final messagesToShow =
-          queue.length > maxMessagesToShow
-              ? queue.sublist(0, maxMessagesToShow)
-              : queue;
+      // Benzersiz mesajları al
+      var uniqueMessages = queue.toSet().toList();
+
+      // Gösterilecek mesajları ayarla
+      if (uniqueMessages.length > maxMessagesToShow) {
+        uniqueMessages = uniqueMessages.sublist(0, maxMessagesToShow);
+      }
 
       final textSpans =
-          messagesToShow
+          uniqueMessages
               .map(
                 (msg) => TextSpan(
                   text:
@@ -459,10 +462,11 @@ class GraphPainter extends CustomPainter {
               )
               .toList();
 
-      if (queue.length > maxMessagesToShow) {
+      // Dahası mesajını hesapla
+      if (queue.toSet().length > maxMessagesToShow) {
         textSpans.add(
           TextSpan(
-            text: "+${queue.length - maxMessagesToShow} dahası",
+            text: "+${queue.toSet().length - maxMessagesToShow} dahası",
             style: textStyle,
           ),
         );
@@ -480,11 +484,11 @@ class GraphPainter extends CustomPainter {
         textPainter.height + padding * 2,
       );
 
-      // Draw queue background
+      // Kuyruk arka planını çiz
       canvas.drawRect(bgRect, _routingTablePaint);
       canvas.drawRect(bgRect, _routingTableBorderPaint);
 
-      // Draw queue content
+      // Kuyruk içeriğini çiz
       textPainter.paint(
         canvas,
         Offset(bgRect.left + padding, bgRect.top + padding),
