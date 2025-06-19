@@ -210,6 +210,9 @@ class GraphPainter extends CustomPainter {
     for (final edge in graph.edges) {
       if (!nodePositions.containsKey(edge.source) ||
           !nodePositions.containsKey(edge.destination)) {
+        debugPrint(
+          'Skipping edge ${edge.source}-${edge.destination} due to missing node positions',
+        );
         continue;
       }
 
@@ -218,6 +221,10 @@ class GraphPainter extends CustomPainter {
       final edgeKey = _formatEdge(edge.source, edge.destination);
 
       final edgePaint = _getEdgePaint(edgeKey);
+
+      debugPrint(
+        'Drawing edge $edgeKey from $start to $end with paint color ${edgePaint.color}',
+      );
 
       canvas.drawLine(start, end, edgePaint);
 
@@ -240,6 +247,7 @@ class GraphPainter extends CustomPainter {
 
   void _drawShortestPath(Canvas canvas, int start, int target) {
     if (previousNodes == null || !previousNodes!.containsKey(target)) {
+      debugPrint('No shortest path info for target node $target');
       return;
     }
 
@@ -256,6 +264,8 @@ class GraphPainter extends CustomPainter {
     if (current == start) {
       path.add(start);
       path.reversed.toList(); // Reverse to get start->target order
+
+      debugPrint('Drawing shortest path: ${path.reversed.toList()}');
 
       // Draw the path edges
       for (int i = 0; i < path.length - 1; i++) {
@@ -277,8 +287,14 @@ class GraphPainter extends CustomPainter {
           if (isDirected) {
             _drawArrow(canvas, startPos, endPos, _shortestPathEdgePaint);
           }
+        } else {
+          debugPrint(
+            'Missing node positions for edge $source-$dest in shortest path',
+          );
         }
       }
+    } else {
+      debugPrint('Could not complete shortest path from $start to $target');
     }
   }
 
@@ -286,9 +302,11 @@ class GraphPainter extends CustomPainter {
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
 
     nodePositions.forEach((nodeId, position) {
+      debugPrint('Drawing node $nodeId at $position');
+
       // Determine node fill color
       final fillPaint = _getNodePaint(nodeId);
-
+      debugPrint('Node $nodeId paint color: ${fillPaint.color}');
       // Draw node circle
       canvas.drawCircle(position, 24, fillPaint);
       canvas.drawCircle(position, 24, _nodeBorderPaint);
@@ -304,6 +322,7 @@ class GraphPainter extends CustomPainter {
       );
       textPainter.layout();
       textPainter.paint(canvas, position - Offset(8, 10));
+
       // Draw message queue count if exists
       if (messageQueues != null &&
           messageQueues!.containsKey(nodeId.toString())) {
@@ -313,22 +332,33 @@ class GraphPainter extends CustomPainter {
   }
 
   Paint _getNodePaint(int nodeId) {
-    // Special cases first
-    if (nodeId == processingNode) return _processingNodePaint;
-    if (nodeId == startNode) return _startNodePaint;
-    if (nodeId == targetNode) return _targetNodePaint;
-    if (currentNode == nodeId) return _currentNodePaint;
-
-    // For shortest path visualization
+    if (nodeId == processingNode) {
+      debugPrint('Node $nodeId paint: processingNodePaint');
+      return _processingNodePaint;
+    }
+    if (nodeId == startNode) {
+      debugPrint('Node $nodeId paint: startNodePaint');
+      return _startNodePaint;
+    }
+    if (nodeId == targetNode) {
+      debugPrint('Node $nodeId paint: targetNodePaint');
+      return _targetNodePaint;
+    }
+    if (currentNode == nodeId) {
+      debugPrint('Node $nodeId paint: currentNodePaint');
+      return _currentNodePaint;
+    }
     if (isShortestPathVisualization &&
         visitedNodes != null &&
         visitedNodes!.contains(nodeId)) {
+      debugPrint('Node $nodeId paint: visitedNodePaint');
       return _visitedNodePaint;
     }
-
-    // For BFS/DFS traversal
-    if (traversalOrder.contains(nodeId)) return _visitedNodePaint;
-
+    if (traversalOrder.contains(nodeId)) {
+      debugPrint('Node $nodeId paint: traversalOrderPaint');
+      return _visitedNodePaint;
+    }
+    debugPrint('Node $nodeId paint: defaultNodePaint');
     return _defaultNodePaint;
   }
 

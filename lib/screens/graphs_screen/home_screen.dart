@@ -274,7 +274,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           totalSteps: totalSteps,
                           graph: widget.graph,
                           traversalOrder: traversalOrder,
-                          nodePositions: _calculateBuchheimWalkerNodePositions(
+                          nodePositions: _calculateMSTNodePositions(
                             widget.graph,
                             context,
                           ),
@@ -312,7 +312,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         painter: GraphPainter(
                           graph: widget.graph,
                           traversalOrder: traversalOrder,
-                          nodePositions: _calculateBuchheimWalkerNodePositions(
+                          nodePositions: _calculatePositionsByLevel(
                             widget.graph,
                             context,
                           ),
@@ -584,11 +584,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return positions;
   }
 
-  Map<int, Offset> _calculateBuchheimWalkerNodePositions(
+  Map<int, Offset> _calculatePositionsByLevel(
     Graphs graph,
     BuildContext context,
   ) {
     final positions = <int, Offset>{};
+
     if (graph.adjacencyList.isEmpty) return positions;
 
     final containerSize = Size(
@@ -598,9 +599,89 @@ class _HomeScreenState extends State<HomeScreen> {
 
     const rootY = 50.0;
     const levelHeight = 120.0;
-    const siblingDistance = 100.0;
+    const siblingDistance = 120.0;
 
-    final allNodes = graph.adjacencyList.keys.toSet();
+    final allNodes = <int>{};
+    graph.adjacencyList.forEach((key, neighbors) {
+      allNodes.add(key);
+      allNodes.addAll(neighbors);
+    });
+
+    // 1- Node'ların depth bilgisi
+    final depths = <int, int>{};
+    final visited = <int>{};
+
+    // Burada birden fazla kök olabilir, tüm düğümlerden dolaş
+    for (final root in allNodes) {
+      if (!depths.containsKey(root)) {
+        final queue = Queue<int>();
+        queue.add(root);
+        depths[root] = 0;
+        visited.add(root);
+
+        while (queue.isNotEmpty) {
+          final node = queue.removeFirst();
+          final depth = depths[node]!;
+
+          for (final neighbor in graph.adjacencyList[node] ?? []) {
+            if (!depths.containsKey(neighbor)) {
+              depths[neighbor] = depth + 1;
+              visited.add(neighbor);
+              queue.add(neighbor);
+            }
+          }
+        }
+      }
+    }
+
+    // 2- Aynı depth'teki node'ları grupla
+    final Map<int, List<int>> nodesByDepth = {};
+    depths.forEach((node, depth) {
+      nodesByDepth.putIfAbsent(depth, () => []).add(node);
+    });
+
+    // 3- Her seviyedeki node'ları yatay pozisyona yerleştir
+    nodesByDepth.forEach((depth, nodesAtDepth) {
+      double startX =
+          (containerSize.width - (nodesAtDepth.length - 1) * siblingDistance) /
+          2;
+
+      for (int i = 0; i < nodesAtDepth.length; i++) {
+        final node = nodesAtDepth[i];
+        final x = startX + i * siblingDistance;
+        final y = rootY + depth * levelHeight;
+        positions[node] = Offset(x, y);
+      }
+    });
+
+    print('Positions by level: $positions');
+    return positions;
+  }
+
+  Map<int, Offset> _calculateBuchheimWalkerNodePositions(
+    Graphs graph,
+    BuildContext context,
+  ) {
+    final positions = <int, Offset>{};
+
+    if (graph.adjacencyList.isEmpty) return positions;
+
+    final containerSize = Size(
+      MediaQuery.of(context).size.width,
+      MediaQuery.of(context).size.height * 0.6,
+    );
+
+    const rootY = 50.0;
+    const levelHeight = 120.0;
+    const siblingDistance = 170.0;
+
+    final allNodes = <int>{};
+
+    graph.adjacencyList.forEach((key, neighbors) {
+      allNodes.add(key);
+      allNodes.addAll(neighbors);
+    });
+    print('All nodes in graph.adjacencyList and neighbors: $allNodes');
     final visited = <int>{};
     final depths = <int, int>{};
 
@@ -612,9 +693,11 @@ class _HomeScreenState extends State<HomeScreen> {
       Map<int, List<int>> children,
     ) {
       positions[nodeId] = Offset(x, y);
-      double childX = x - siblingDistance * (children[nodeId]?.length ?? 0) / 2;
 
-      for (final child in children[nodeId]!) {
+      final childCount = children[nodeId]?.length ?? 0;
+      double childX = x - siblingDistance * (childCount - 1) / 2;
+
+      for (final child in children[nodeId] ?? []) {
         _buchheimWalker(child, childX, y + levelHeight, children);
         childX += siblingDistance;
       }
@@ -636,7 +719,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final nodeId = queue.removeFirst();
         final nodeChildren = <int>[];
 
-        for (final neighbor in graph.adjacencyList[nodeId] ?? []) {
+        for (final neighbor in Set.of(graph.adjacencyList[nodeId] ?? [])) {
           if (!visited.contains(neighbor)) {
             visited.add(neighbor);
             nodeChildren.add(neighbor);
@@ -656,7 +739,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       xOffset += 250; // Yeni bileşenleri yana kaydır
     }
-
+    print('Final positions: $positions');
     return positions;
   }
 
@@ -1044,14 +1127,14 @@ class _HomeScreenState extends State<HomeScreen> {
           label: "BFS",
           color: Colors.blue,
           onPressed: () => _runTraversal(startBFS, "BFS"),
-          isLoading: _isProcessing,
+          // isLoading: _isProcessing,
         ),
         _buildActionButton(
           icon: Icons.play_arrow,
           label: "DFS",
           color: Colors.green,
           onPressed: () => _runTraversal(startDFS, "DFS"),
-          isLoading: _isProcessing,
+          // isLoading: _isProcessing,
         ),
         _buildActionButton(
           icon: Icons.send,

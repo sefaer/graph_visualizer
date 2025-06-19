@@ -1,6 +1,4 @@
 import 'dart:ui';
-
-import 'package:graphview/graphview.dart' as gv;
 import 'dart:collection';
 import 'dart:convert';
 
@@ -8,6 +6,8 @@ class Graphs {
   Map<int, List<int>> adjacencyList = {};
   Map<String, int> edgeWeights = {};
   List<Edge> edges = [];
+
+  // Düğüm ekle (eğer yoksa)
   void addNode(int node) {
     if (!adjacencyList.containsKey(node)) {
       adjacencyList[node] = [];
@@ -15,83 +15,95 @@ class Graphs {
     }
   }
 
+  // Yönsüz ve ağırlıksız kenar ekleme
   void addEdge(int node1, int node2) {
-    print('Adding edge between $node1 and $node2');
-    if (!adjacencyList.containsKey(node1)) {
-      addNode(node1);
-    }
-    if (!adjacencyList.containsKey(node2)) {
-      addNode(node2);
-    }
+    if (!adjacencyList.containsKey(node1)) addNode(node1);
+    if (!adjacencyList.containsKey(node2)) addNode(node2);
 
-    if (!adjacencyList[node1]!.contains(node2)) {
+    if (!adjacencyList[node1]!.contains(node2))
       adjacencyList[node1]!.add(node2);
-    }
-    if (!adjacencyList[node2]!.contains(node1)) {
+    if (!adjacencyList[node2]!.contains(node1))
       adjacencyList[node2]!.add(node1);
-    }
-    print('Current adjacency list: $adjacencyList');
   }
 
-  // Yeni eklenen metod: Ağırlıklı kenarlardan grafik oluşturma
+  // Ağırlıklı kenar ekleme (adjacencyList ve edges listesine ekler)
+  void addEdgeWithWeight(int u, int v, int weight) {
+    // Aynı kenarın çift yönlü tekrarını önlemek için kontrol
+    if (!edges.any(
+      (e) =>
+          (e.source == u && e.destination == v) ||
+          (e.source == v && e.destination == u),
+    )) {
+      edges.add(Edge(source: u, destination: v, weight: weight));
+
+      adjacencyList.putIfAbsent(u, () => []).add(v);
+      adjacencyList.putIfAbsent(v, () => []).add(u);
+
+      edgeWeights["$u-$v"] = weight;
+      edgeWeights["$v-$u"] = weight;
+    }
+  }
+
+  // WeightedEdges'den Graph oluşturur
   static Graphs fromWeightedEdges(Map<int, List<Edge>> weightedEdges) {
     print('\n=== GRAFİK AĞIRLIKLI KENARLARDAN OLUŞTURULUYOR ===');
-    print('Toplam düğüm sayısı: ${weightedEdges.keys.length}');
-    print('Düğümler: ${weightedEdges.keys.toList()}');
-
     final graph = Graphs();
-    int totalEdgesAdded = 0;
-    int totalWeightsAdded = 0;
 
-    // Tüm düğümleri ekle
+    // Tüm düğümleri topla (kaynak ve hedef)
+    final allNodeIds = <int>{};
+    for (var entry in weightedEdges.entries) {
+      allNodeIds.add(entry.key);
+      for (var edge in entry.value) {
+        allNodeIds.add(edge.destination);
+      }
+    }
+
+    print('Toplam düğüm sayısı: ${allNodeIds.length}');
+    print('Düğümler: ${allNodeIds.toList()}');
+
+    // Düğümleri ekle
     print('\nDÜĞÜMLER EKLENİYOR:');
-    weightedEdges.keys.forEach((node) {
+    for (var node in allNodeIds) {
       graph.addNode(node);
       print(' - Düğüm eklendi: $node');
-    });
+    }
 
     // Kenarları ve ağırlıkları ekle
     print('\nKENARLAR VE AĞIRLIKLAR EKLENİYOR:');
-    weightedEdges.forEach((source, edges) {
+    final addedEdges = <String>{};
+    for (var entry in weightedEdges.entries) {
+      final source = entry.key;
+      final edges = entry.value;
+
       print('\nKaynak düğüm $source için kenarlar:');
 
       if (edges.isEmpty) {
         print('  ! Bu düğümün çıkan kenarı yok (yalıtılmış düğüm)');
       }
 
-      for (Edge edge in edges) {
-        // Kenar ekleme öncesi kontrol
-        if (!weightedEdges.containsKey(edge.destination)) {
-          print('  ! UYARI: Hedef düğüm ${edge.destination} ana listede yok!');
+      for (var edge in edges) {
+        final dest = edge.destination;
+        final weight = edge.weight;
+
+        if (weight == null) {
+          print('  ! UYARI: Kenar $source -> $dest ağırlıksız, çizilmiyor');
+          continue;
         }
 
-        // Eğer ağırlık yoksa, kenar eklenmesin
-        if (edge.weight == null) {
-          print(
-            '  ! UYARI: Kenar $source -> ${edge.destination} ağırlıksız, çizilmiyor',
-          );
-          continue; // Bu kenarı atla
+        final edgeKey1 = '$source->$dest';
+        final edgeKey2 = '$dest->$source';
+
+        if (!addedEdges.contains(edgeKey1) && !addedEdges.contains(edgeKey2)) {
+          graph.addEdgeWithWeight(source, dest, weight);
+          addedEdges.add(edgeKey1);
+          print('  - Kenar eklendi: $source <-> $dest (ağırlık: $weight)');
+        } else {
+          print('  ! Atlandı (tekrar kenar): $source <-> $dest');
         }
-
-        // Kenarı ekle
-        graph.addEdge(source, edge.destination);
-        print('  - Kenar eklendi: $source -> ${edge.destination}');
-
-        // Ağırlık ekle
-        graph.addEdgeWithWeight(source, edge.destination, edge.weight);
-        print('    • Ağırlık: ${edge.weight} eklendi');
-
-        totalEdgesAdded++;
-        totalWeightsAdded++;
       }
-    });
+    }
 
-    print('\nSONUÇ:');
-    print(' - Toplam eklenen düğüm: ${graph.adjacencyList.length}');
-    print(' - Toplam eklenen kenar: $totalEdgesAdded');
-    print(' - Toplam eklenen ağırlık: $totalWeightsAdded');
-
-    // Komşuluk listesini debug için yazdır
+    // Oluşan grafik yapısını göster
     print('\nOLUŞAN GRAFİK YAPISI:');
     graph.adjacencyList.forEach((node, neighbors) {
       print(' - Düğüm $node komşuları: $neighbors');
@@ -100,41 +112,32 @@ class Graphs {
     return graph;
   }
 
+  // Bağlılık kontrolü (connected graph kontrolü)
   bool isConnected() {
-    print('Checking if graph is connected...');
-    if (adjacencyList.isEmpty) {
-      print('Graph is empty, returning false');
-      return false;
-    }
+    if (adjacencyList.isEmpty) return false;
 
-    List<int> visited = [];
-    Queue<int> queue = Queue();
-    int firstNode = adjacencyList.keys.first;
+    final visited = <int>{};
+    final queue = Queue<int>();
+    final firstNode = adjacencyList.keys.first;
+
     queue.add(firstNode);
     visited.add(firstNode);
-    print('Starting BFS from node $firstNode');
 
     while (queue.isNotEmpty) {
-      int currentNode = queue.removeFirst();
-      print('Visiting node $currentNode');
-      for (int neighbor in adjacencyList[currentNode] ?? []) {
+      final currentNode = queue.removeFirst();
+      for (var neighbor in adjacencyList[currentNode] ?? []) {
         if (!visited.contains(neighbor)) {
           visited.add(neighbor);
           queue.add(neighbor);
-          print('Discovered neighbor $neighbor');
         }
       }
     }
 
-    bool connected = visited.length == adjacencyList.length;
-    print(
-      'Graph connected: $connected (Visited ${visited.length} of ${adjacencyList.length} nodes)',
-    );
-    return connected;
+    return visited.length == adjacencyList.length;
   }
 
+  // Adjacency matrix'den Graph oluşturma
   static Graphs fromAdjacencyMatrix(List<List<int>> matrix) {
-    print('Creating graph from adjacency matrix...');
     final graph = Graphs();
     for (int i = 0; i < matrix.length; i++) {
       graph.addNode(i);
@@ -144,62 +147,54 @@ class Graphs {
         }
       }
     }
-    print('Created graph with ${graph.adjacencyList.length} nodes from matrix');
     return graph;
   }
 
+  // Linked list (komşuluk listesi) ile Graph oluşturma
   static Graphs fromLinkedList(Map<int, List<int>> linkedList) {
-    print('Creating graph from linked list...');
     final graph = Graphs();
 
-    linkedList.keys.forEach((node) {
+    for (var node in linkedList.keys) {
       graph.addNode(node);
-    });
+    }
 
     linkedList.forEach((node, neighbors) {
-      final uniqueNeighbors =
-          neighbors.where((neighbor) => neighbor != node).toSet();
-      for (int neighbor in uniqueNeighbors) {
+      final uniqueNeighbors = neighbors.where((n) => n != node).toSet();
+      for (var neighbor in uniqueNeighbors) {
         if (linkedList.containsKey(neighbor)) {
           graph.addEdge(node, neighbor);
         } else {
-          print(
-            'Warning: Neighbor $neighbor not found in graph, skipping edge',
-          );
+          print('Warning: Neighbor $neighbor not found, skipping edge');
         }
       }
     });
 
-    print(
-      'Created graph with ${graph.adjacencyList.length} nodes from linked list',
-    );
     return graph;
   }
 
+  // JSON formatına dönüştürme
   String toJson() {
-    print('Converting graph to JSON...');
     return jsonEncode({
       'adjacencyList': adjacencyList,
       'edgeWeights': edgeWeights,
     });
   }
 
+  // JSON'dan Graph oluşturma
   static Graphs fromJson(String json) {
-    print('Creating graph from JSON...');
     try {
-      Map<String, dynamic> data = jsonDecode(json);
-      Map<int, List<int>> adjacencyList = {};
-      Map<String, int> edgeWeights = {};
+      final data = jsonDecode(json);
+      final adjacencyList = <int, List<int>>{};
+      final edgeWeights = <String, int>{};
 
-      data['adjacencyList'].forEach((key, value) {
+      (data['adjacencyList'] as Map).forEach((key, value) {
         adjacencyList[int.parse(key)] = List<int>.from(value);
       });
 
-      data['edgeWeights'].forEach((key, value) {
+      (data['edgeWeights'] as Map).forEach((key, value) {
         edgeWeights[key] = value;
       });
 
-      print('Created graph with ${adjacencyList.length} nodes from JSON');
       return Graphs()
         ..adjacencyList = adjacencyList
         ..edgeWeights = edgeWeights;
@@ -218,30 +213,6 @@ class Graphs {
     return edgeWeights["$u-$v"] ?? edgeWeights["$v-$u"] ?? 1;
   }
 
-  void addEdgeWithWeight(int u, int v, int weight) {
-    // Önce bu kenar zaten var mı kontrol et
-    if (!edges.any(
-      (e) =>
-          (e.source == u && e.destination == v) ||
-          (e.source == v && e.destination == u),
-    )) {
-      // Kenarı ekle
-      edges.add(Edge(source: u, destination: v, weight: weight));
-
-      // Adjacency list'i güncelle
-      adjacencyList.putIfAbsent(u, () => []).add(v);
-      adjacencyList.putIfAbsent(v, () => []).add(u);
-
-      // Ağırlıkları ekle
-      edgeWeights["$u-$v"] = weight;
-      edgeWeights["$v-$u"] = weight;
-
-      // debugPrint('✅ Kenar eklendi: $u-$v (Ağırlık: $weight)');
-    } else {
-      // debugPrint('⏭️ Kenar zaten var: $u-$v');
-    }
-  }
-
   bool edgeExists(int u, int v) {
     return edges.any(
       (e) =>
@@ -252,30 +223,42 @@ class Graphs {
 
   Edge? getEdge(int u, int v) {
     return edges.firstWhere(
-      (edge) =>
-          (edge.source == u && edge.destination == v) ||
-          (edge.source == v && edge.destination == u),
-      orElse: () => Edge(source: u, destination: v), // Fallback
+      (e) =>
+          (e.source == u && e.destination == v) ||
+          (e.source == v && e.destination == u),
+      orElse: () => Edge(source: u, destination: v),
     );
   }
 }
 
-// Edge model sınıfı
 class Edge {
   final int source;
   final int destination;
   final int weight;
-  Offset? sourcePosition = Offset.zero;
-  Offset? destinationPosition = Offset.zero;
+
+  // Pozisyonlar (nullable)
+  Offset? sourcePosition;
+  Offset? destinationPosition;
 
   Edge({required this.source, required this.destination, this.weight = 1});
+
   void updatePositions(Offset srcPos, Offset destPos) {
     sourcePosition = srcPos;
     destinationPosition = destPos;
   }
 
   @override
-  String toString() {
-    return '$source-$destination($weight)';
+  String toString() => '$source-$destination($weight)';
+}
+
+// Extension ile tüm düğümleri almak için kolay erişim
+extension GraphExtensions on Graphs {
+  Set<int> get allNodes {
+    final nodes = <int>{};
+    adjacencyList.forEach((key, neighbors) {
+      nodes.add(key);
+      nodes.addAll(neighbors);
+    });
+    return nodes;
   }
 }
