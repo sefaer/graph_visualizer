@@ -264,7 +264,7 @@ class _HomeScreenState extends State<HomeScreen> {
             maxScale: 3.0,
             child: Container(
               width: MediaQuery.of(context).size.width,
-              height: MediaQuery.of(context).size.height * 0.6,
+              height: MediaQuery.of(context).size.height,
               color: Colors.grey.shade50,
               child:
                   widget.graphType == "mst"
