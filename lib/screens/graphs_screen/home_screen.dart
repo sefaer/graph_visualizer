@@ -3,23 +3,26 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:graph_visualizer/algorithms/bellman_ford.dart';
+import 'package:graph_visualizer/algorithms/bfs.dart';
+import 'package:graph_visualizer/algorithms/dfs.dart';
 import 'package:graph_visualizer/algorithms/dijkstra.dart';
 import 'package:graph_visualizer/algorithms/distributed/messages.dart';
 import 'package:graph_visualizer/algorithms/kruskal.dart';
 import 'package:graph_visualizer/algorithms/prim.dart';
 import 'package:graph_visualizer/algorithms/reverse_delete.dart';
+import 'package:graph_visualizer/algorithms/updateBfs.dart';
 import 'package:graph_visualizer/helpers/screenshot_helper.dart';
 import 'package:graph_visualizer/helpers/screenshot_helper_web.dart'
     if (dart.library.io) 'package:graph_visualizer/helpers/screenshot_helper_mobile.dart';
+import 'package:graph_visualizer/models/distrubuted_models.dart';
+import 'package:graph_visualizer/models/graphs.dart';
+import 'package:graph_visualizer/models/mst_models.dart';
 import 'package:graph_visualizer/models/routing_step.dart';
 import 'package:graph_visualizer/models/shortespath_models.dart';
 import 'package:graph_visualizer/widgets/graph_painter.dart';
 import 'package:flutter/material.dart';
 import 'package:graphview/graphview.dart' as gv;
-import '../../models/graphs.dart';
-import '../../models/mst_models.dart';
-import '../../algorithms/bfs.dart';
-import '../../algorithms/dfs.dart';
+
 import 'input_screen.dart';
 
 enum MSTAlgorithm { Prim, Kruskal, ReverseDelete }
@@ -316,23 +319,21 @@ class _HomeScreenState extends State<HomeScreen> {
                           showWeights: true,
                           isShortestPathVisualization: false,
                           isMSTVisualization: false,
-                          isDirected:
-                              false, // Typically true for routing examples
+                          isDirected: false,
                           currentStep: currentStep,
                           totalSteps: totalSteps,
-
-                          // Distributed routing specific parameters
-                          messages:
-                              currentRoutingStep?.messages, // List<Message>
-                          routingTables:
-                              currentRoutingStep
-                                  ?.routingTables, // Map<String, String>
+                          messages: currentRoutingStep?.messages,
+                          routingTables: currentRoutingStep?.routingTables,
                           activeMessageIndex:
                               currentRoutingStep?.activeMessageIndex,
                           messageQueues:
-                              currentRoutingStep
-                                  ?.messageQueues, // Map<String, List<String>>
-                          processingNode: currentRoutingStep?.processingNode,
+                              currentRoutingStep?.messageQueuesAsStrings,
+                          processingNode:
+                              currentRoutingStep?.processingNode != null
+                                  ? int.tryParse(
+                                    currentRoutingStep!.processingNode!,
+                                  )
+                                  : null,
                           showMessagePaths: true,
                           showMessageContents: true,
                           messageProgress:
@@ -1054,9 +1055,16 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         _buildActionButton(
           icon: Icons.send,
-          label: "Routing",
+          label: "Simple Routing",
           color: Colors.deepOrange,
           onPressed: startDistanceVectorRouting,
+        ),
+
+        _buildActionButton(
+          icon: Icons.layers,
+          label: "Distributed BFS",
+          color: Colors.indigo,
+          onPressed: startDistributedBfs,
         ),
       ];
     }
@@ -1112,7 +1120,7 @@ class _HomeScreenState extends State<HomeScreen> {
           description: '$node düğümü güncellemeleri işliyor',
           messages: [],
           routingTables: Map.of(routingTables),
-          processingNode: node,
+          processingNode: node.toString(),
           messageQueues: Map.fromEntries(
             messageQueues.entries.map(
               (e) => MapEntry(e.key.toString(), e.value),
@@ -1143,7 +1151,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   messages: [message],
                   routingTables: Map.of(routingTables),
                   activeMessageIndex: 0,
-                  processingNode: node,
+                  processingNode: node.toString(),
                   messageQueues: Map.fromEntries(
                     messageQueues.entries.map(
                       (e) => MapEntry(e.key.toString(), e.value),
@@ -1841,6 +1849,222 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     await visualizer.visualize();
+  }
+
+  Future<void> startDistributedBfs() async {
+    if (!_isGraphReady || _isProcessing) return;
+
+    setState(() {
+      _isProcessing = true;
+      _routingSteps.clear();
+      currentRoutingStep = null;
+      currentStep = 0;
+    });
+
+    // Kullanıcıdan başlangıç düğümünü al
+    final result = await _showRoutingParametersDialog();
+    if (result == null) {
+      setState(() => _isProcessing = false);
+      return;
+    }
+
+    final int startNode = result['startNode'];
+    final String messageContent = result['message'];
+
+    // Veri yapılarını başlat
+    final nodes = <String, DistributedNode>{};
+    final messageQueues = <String, List<Message>>{};
+    final routingTables = <String, String>{};
+
+    // Tüm düğümleri oluştur (komşuları tekilleştirerek)
+    widget.graph.adjacencyList.forEach((nodeId, neighbors) {
+      final uniqueNeighbors =
+          neighbors.map((n) => n.toString()).toSet().toList();
+      final node = DistributedNode(nodeId.toString(), uniqueNeighbors);
+      nodes[nodeId.toString()] = node;
+      messageQueues[nodeId.toString()] = [];
+
+      // Kök düğümü işaretle
+      if (nodeId == startNode) {
+        node.initializeAsRoot();
+      }
+    });
+
+    int diameter = _calculateGraphDiameter(widget.graph);
+    int currentLayer = 0;
+    bool allNodesProcessed = false;
+
+    // Kök düğümden başlangıç mesajlarını gönder
+    for (final neighbor in nodes[startNode.toString()]!.neighbors) {
+      final message = Message.bfsLayer(
+        sourceNodeId: startNode.toString(),
+        destinationNodeId: neighbor,
+        layer: 1,
+      );
+      if (!_messageExistsInQueue(messageQueues[neighbor]!, message)) {
+        messageQueues[neighbor]!.add(message);
+      }
+    }
+
+    while (currentLayer <= diameter && !allNodesProcessed) {
+      // Tüm düğümleri işle
+      for (final node in nodes.values) {
+        final messages = messageQueues[node.id]!.toList();
+        messageQueues[node.id]!.clear();
+
+        // İşlem görselleştirme
+        setState(() {
+          currentRoutingStep = RoutingStep(
+            currentStep: currentStep++,
+            totalSteps: diameter * nodes.length,
+            description: 'Katman $currentLayer: Düğüm ${node.id} işleniyor',
+            messages: messages,
+            routingTables: Map.of(routingTables),
+            processingNode: node.id,
+            messageQueues: Map.of(messageQueues),
+            nodeStates: nodes.map(
+              (id, n) =>
+                  MapEntry(id, 'Layer: ${n.myLayer}, Parent: ${n.parent}'),
+            ),
+          );
+          _routingSteps.add(currentRoutingStep!);
+        });
+        await Future.delayed(Duration(milliseconds: animationSpeed.round()));
+
+        // Her mesajı işle
+        for (final message in messages) {
+          await node.receiveMessage(message, nodes[message.sourceNodeId], (
+            newMessage,
+            nextHopId,
+          ) async {
+            // Mesaj gönderme animasyonu
+            for (double progress = 0.0; progress <= 1.0; progress += 0.2) {
+              setState(() {
+                currentRoutingStep = RoutingStep(
+                  currentStep: currentStep++,
+                  totalSteps: diameter * nodes.length,
+                  description: '${node.id} → $nextHopId mesaj gönderiyor',
+                  messages: [newMessage],
+                  routingTables: Map.of(routingTables),
+                  processingNode: node.id,
+                  messageQueues: Map.of(messageQueues),
+                  messageProgress: progress,
+                  nodeStates: nodes.map(
+                    (id, n) => MapEntry(
+                      id,
+                      'Layer: ${n.myLayer}, Parent: ${n.parent}',
+                    ),
+                  ),
+                );
+              });
+              await Future.delayed(
+                Duration(milliseconds: animationSpeed.round() ~/ 5),
+              );
+            }
+
+            // Alıcının kuyruğuna mesajı ekle (yinelenenleri kontrol ederek)
+            if (!_messageExistsInQueue(messageQueues[nextHopId]!, newMessage)) {
+              messageQueues[nextHopId]!.add(newMessage);
+            }
+          });
+        }
+      }
+
+      currentLayer++;
+      allNodesProcessed = nodes.values.every((node) => node.myLayer != -1);
+    }
+
+    // Son görselleştirme durumu
+    setState(() {
+      _isProcessing = false;
+      currentRoutingStep = RoutingStep(
+        currentStep: currentStep,
+        totalSteps: diameter * nodes.length,
+        description: 'Dağıtık BFS tamamlandı',
+        messages: [],
+        routingTables: routingTables,
+        messageQueues: messageQueues,
+        nodeStates: nodes.map(
+          (id, n) => MapEntry(id, 'Layer: ${n.myLayer}, Parent: ${n.parent}'),
+        ),
+      );
+    });
+
+    // Sonuçları göster
+    _showUpdateBfsResults(nodes, startNode);
+  }
+
+  bool _messageExistsInQueue(List<Message> queue, Message message) {
+    return queue.any(
+      (m) =>
+          m.sourceNodeId == message.sourceNodeId &&
+          m.layer == message.layer &&
+          m.destinationNodeId == message.destinationNodeId,
+    );
+  }
+
+  void _showUpdateBfsResults(
+    Map<String, DistributedNode> nodes,
+    int startNode,
+  ) {
+    final results = <String, String>{};
+    final adjacencyList = <String, List<String>>{};
+
+    nodes.forEach((id, node) {
+      results[id] =
+          'Katman(Layer): ${node.myLayer}, Ebeveyn(Parent): ${node.parent == -1 ? 'Root' : node.parent}';
+      adjacencyList[id] = node.neighbors;
+    });
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: Text('Update BFS Sonuçları'),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Başlangıç Düğümü: $startNode',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 16),
+                  ...results.entries.map(
+                    (e) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ListTile(
+                          title: Text('Düğüm ${e.key}'),
+                          subtitle: Text(e.value),
+                        ),
+                        Padding(
+                          padding: EdgeInsets.only(left: 16),
+                          child: Text(
+                            'Komşular: ${adjacencyList[e.key]?.join(', ') ?? 'Yok'}',
+                            style: TextStyle(color: Colors.grey[600]),
+                          ),
+                        ),
+                        Divider(),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text('Tamam'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  int _calculateGraphDiameter(Graphs graph) {
+    // Basit bir çap hesaplama (gerçek uygulamada daha karmaşık olabilir)
+    return graph.adjacencyList.length ~/ 2;
   }
 
   Future<void> startBFS() async {

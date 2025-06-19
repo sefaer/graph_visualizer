@@ -153,6 +153,21 @@ class MainScreen extends StatelessWidget {
 • Negatif döngü tespiti yapabilir
 • Zaman karmaşıklığı: O(VE)""",
               ),
+              _buildAlgorithmCard(
+                context: context,
+                title: "Dağıtık Algoritmalar",
+                description:
+                    "Düğümler arası mesajlaşmayla karar alınan algoritmalar. Merkezi kontrol yoktur.",
+                icon: Icons.sensors,
+                color: Colors.teal,
+                info: """
+• Her düğüm yalnızca komşularıyla haberleşir
+• Merkezi kontrol yerine yerel kararlar
+• Simple Routing: Sabit mesaj yönlendirme
+• Update BFS: Adım adım güncellenen seviye keşfi
+• Ağ topolojisi öğrenme ve routing için kullanılır
+• Karmaşıklık: Ağ yapısına göre değişken""",
+              ),
 
               SizedBox(height: 40),
 
@@ -227,6 +242,10 @@ class MainScreen extends StatelessWidget {
                     _buildTipItem(
                       "Bellman-Ford",
                       "Finansal arbitraj, negatif ağırlıklı yollar, ağ optimizasyonu",
+                    ),
+                    _buildTipItem(
+                      "Dağıtık",
+                      "Sensor ağları, peer-to-peer sistemler, mesajlaşmaya dayalı routing",
                     ),
                   ],
                 ),

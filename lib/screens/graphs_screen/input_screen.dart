@@ -356,8 +356,11 @@ class _InputScreenState extends State<InputScreen> {
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
             ),
             Text(
-              "BFS • DFS • Dijkstra • Bellman-Ford • MST",
-              style: TextStyle(fontSize: 12, color: Colors.white70),
+              "BFS • DFS • Dijkstra • Bellman-Ford • MST • Distrubuted",
+              style: TextStyle(
+                fontSize: 12,
+                color: const Color.fromARGB(179, 12, 4, 230),
+              ),
             ),
           ],
         ),
